@@ -248,7 +248,7 @@ class System:
         for t in self.get_all_tanks().values():
             t.tick3()
             if t.overflowed:
-                return True 
+                return True
         
         #handle alarms
         for a in self.get_all_alarms().items():

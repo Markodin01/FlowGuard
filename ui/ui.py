@@ -284,16 +284,36 @@ def make_graph(s: System, node_pos: Dict[str, tuple]) -> go.Figure:
         # text=f"{k}<br>{c.min_flow}/{c.max_flow}"
         text = f"{k}<br>{c.desired_flow}"
 
+        if hasattr(c, '_broken') and c._broken:
+            line_color = "red"
+            line_width = 2
+            dash_style = "dash"
+            text += "<br>[BROKEN]"
+        else:
+            line_color = "#AAAAAA"
+            line_width = 0.5
+            dash_style = None
+
         edge_figs.append(
-            go.Scatter(x=x, y=y, mode="lines", line=dict(width=0.5, color="#AAAAAA"))
+            go.Scatter(
+                x=x, 
+                y=y, 
+                mode="lines", 
+                line=dict(
+                    width=line_width, 
+                    color=line_color,
+                    dash=dash_style
+                )
+            )
         )
+        
         arrows_fig.append(
             go.Scatter(
                 x=x,
                 y=y,
                 mode="markers",
                 marker=dict(
-                    color="#AAAAAA",
+                    color=line_color,
                     symbol="arrow",
                     size=20,
                     angleref="previous",
@@ -408,6 +428,29 @@ def make_sliders(system: System) -> List[dbc.Row]:
         if isinstance(c, (TapPipe, ValvePipe))
     ]
 
+
+def make_broken_connectors_div(system: System) -> html.Div:
+    """Create a component displaying broken connectors."""
+    broken_connectors = [
+        (k, c) for k, c in system.get_all_connectors().items() 
+        if hasattr(c, '_broken') and c._broken
+    ]
+    
+    if not broken_connectors:
+        return html.Div("No broken connectors")
+    
+    return html.Div([
+        dbc.Alert(
+            [
+                html.Strong(f"Connector: {k} "),
+                html.Span(f"Flow rate: {c._current_flow}"),
+                html.Div(f"Repair time remaining: {c.repair_time}")
+            ],
+            color="danger",
+            className="mb-2",
+        )
+        for k, c in broken_connectors
+    ])
 
 def make_alarms_div(system: System) -> List[dbc.Alert]:
     """
@@ -554,6 +597,16 @@ alarms_panel = dbc.Card(
     ]
 )
 
+broken_connectors_panel = dbc.Card(
+    [
+        dbc.CardHeader("Broken Connectors"),
+        dbc.CardBody(
+            html.Div(id="broken_connectors_div", style={"maxHeight": "200px", "overflowY": "auto"})
+        ),
+    ],
+    className="mb-4",
+)
+
 # Invisible components
 invisible_components = [
     dcc.Store(id="node_positions", data=jsonpickle.encode(node_pos)),
@@ -574,7 +627,6 @@ app.layout = dbc.Container(
                             style={"height": "60vh"},
                             config={"staticPlot": True},
                         ),
-                        alarms_panel
                     ],
                     md=7,
                 ),
@@ -590,26 +642,44 @@ app.layout = dbc.Container(
                             ],
                             className="mb-4",
                         ),
-                        dbc.Card(
-                            [
-                            dbc.CardHeader("Repair Teams"),
-                            dbc.CardBody(
-                                make_repair_div(system)
-                            )
-                            ]
-                        ),
                     ],
                     md=5,
                 ),
             ]
         ),
+        
+        dbc.Row(
+            [
+                dbc.Col(
+                    [
+                        alarms_panel,
+                    ],
+                    md=6,
+                ),
+                dbc.Col([broken_connectors_panel], md=4),
+                dbc.Col(
+                    [
+                        dbc.Card(
+                            [
+                                dbc.CardHeader("Repair Teams"),
+                                dbc.CardBody(
+                                    make_repair_div(system)
+                                )
+                            ]
+                        ),
+                    ],
+                    md=6,
+                ),
+            ],
+            className="mt-4",
+        ),
+        
         *invisible_components,
         dcc.Store(id="buffered-slider-values", data={}),
     ],
     fluid=True,
     className="mt-4",
 )
-# Add a new interval component for Redis publishing
 app.layout.children.append(dcc.Interval(id="redis-publish-interval", interval=10000, n_intervals=0))
 
 
@@ -706,6 +776,7 @@ def publish_system_state(n_intervals, system_data):
     Output("graph", "figure"),
     Output("alarms_div", "children"),
     Output("repair_div", "children"),
+    Output("broken_connectors_div", "children"),
     Output("current_time", "children"),
     Output("current_score", "children"),
     Output("sim_timer", "disabled", allow_duplicate=True),
@@ -736,13 +807,11 @@ def tick(time, data, slider_values, slider_ids, node_pos):
         system.reset()
     node_pos = jsonpickle.decode(node_pos)
 
-    # Update connector flows based on slider values
     for i, slider_id in enumerate(slider_ids):
         connector_id = slider_id["index"]
         value = slider_values[i]
         system.get_connector(connector_id).desired_flow = value
 
-    # Process new valve actions from Redis
     while not message_queue.empty():
         valve_action = message_queue.get_nowait()
         for slider_id, slider_value in zip(slider_ids, slider_values):
@@ -763,10 +832,11 @@ def tick(time, data, slider_values, slider_ids, node_pos):
         make_graph(system, node_pos),
         make_alarms_div(system),
         make_repair_div(system),
+        make_broken_connectors_div(system),
         system.time,
         system.score,
         disable_sim,
-        disable_sim,
+        disable_sim
     )
 
 
@@ -833,15 +903,13 @@ def update_system_state(
     system = jsonpickle.decode(system_data)
 
     if "sim_timer" in triggered_id:
-        # Apply buffered changes and progress the simulation
         for connector_id, value in buffered_values.items():
             if connector_id in system.get_all_connectors():
                 system.get_connector(connector_id).desired_flow = value
         system.tick(n_intervals)
         updated_system_data = jsonpickle.encode(system)
-        buffered_values = {}  # Reset buffered values after applying
+        buffered_values = {}
     else:
-        # Update buffered slider values
         for value, slider_id in zip(slider_values, slider_ids):
             connector_id = slider_id["index"]
             buffered_values[connector_id] = value

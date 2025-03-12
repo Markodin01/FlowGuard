@@ -1,0 +1,55 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "UI",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "ui/ui.py",
+            "console": "integratedTerminal",
+            "args": ["configurations/sample.tnp"],
+        },
+        {
+            "name": "UI_PF",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "ui_pf.py",
+            "console": "integratedTerminal",
+            "args": ["configurations/sample.tnp"],
+        },
+        {
+            "name": "Listener Service",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "listener_service.py",
+            "console": "integratedTerminal",
+        },
+        {
+            "name": "AI Component",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "RL.py",
+            "console": "integratedTerminal",
+        },
+        {
+            "name": "PF",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "PF.py",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "recommendations",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "recommendations.py",
+            "console": "integratedTerminal"
+        }
+    ],
+    "compounds": [
+        {
+            "name": "Debug Full",
+            "configurations": ["UI in debug mode", "Listener Service", "AI Component"]
+        }
+    ]
+}
