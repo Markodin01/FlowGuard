@@ -637,7 +637,7 @@ def redis_listener():
                         alert_content = {
                             "title": f"High Alert! {connector}",
                             "content": f"High breakage probability detected for connector: {connector}",
-                            "recommendation": f"Urgent inspection and maintenance required for: {connector_to_inspect}",
+                            "recommendation": f"Urgent inspection and maintenance required for: connector to inspect",
                             "type": alert_type,
                             "model": "Probability Threshold Model",
                             "connector": connector,
@@ -648,7 +648,7 @@ def redis_listener():
                         alert_content = {
                             "title": f"Low Alert! {connector}",
                             "content": f"Elevated breakage probability detected for connector: {connector}",
-                            "recommendation": f"Schedule inspection for: {connector_to_inspect}",
+                            "recommendation": f"Schedule inspection for: connector to inspect",
                             "type": alert_type,
                             "model": "Probability Threshold Model",
                             "connector": connector,

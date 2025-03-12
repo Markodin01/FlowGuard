@@ -25,9 +25,13 @@ import networkx as nx
 import redis
 import jsonpickle
 
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from core.model import Source, Sink, TapPipe, ValvePipe, LowAlarm, HighAlarm
 from core.system import System
 from core.tp_parser import parse
+
+
 
 # Initialize Redis connection
 redis_client = redis.StrictRedis(host="localhost", port=6379)
@@ -421,8 +425,8 @@ def make_alarms_div(system: System) -> List[dbc.Alert]:
             [
                 dbc.Row(
                     [
-                        dbc.Col(f"Time: {a[1].trigger_time}", width=4),
-                        dbc.Col(f"Tank: {tank_ids[a[1].tank]}", width=4),
+                        dbc.Col(f"Time: {a[1].trigger_time}", width=6),
+                        dbc.Col(f"Tank: {tank_ids[a[1].tank]}", width=6),
                         dbc.Col(
                             f"{'Low' if isinstance(a[1], LowAlarm) else 'High'} Level: {a[1].level}",
                             width=4,
@@ -438,22 +442,22 @@ def make_alarms_div(system: System) -> List[dbc.Alert]:
     ]
 
 
-def make_repair_div(system: System) -> List[dbc.Row]:
+def make_repair_div(system: System) -> html.Div:  # Note: Return type changed to html.Div
     """
     Create components for repair team controls and status.
-
+    
     Args:
         system (System): The current state of the system.
-
+    
     Returns:
-        List[dbc.Row]: List of Dash Bootstrap rows for repair teams.
+        html.Div: A scrollable div containing repair team controls.
     """
-    loc_options = {"None": "Select a location..."} | {
-        k: k for k in sorted(system.get_all_connectors().keys())
-    }
+    loc_options = {"None": "Select a location..."}
+    loc_options.update({k: k for k in sorted(system.get_all_connectors().keys())})
     connector_to_id_map = {c: k for k, c in sorted(system.get_all_connectors().items())}
-
-    return [
+    
+    # Create the rows as before
+    rows = [
         dbc.Row(
             [
                 dbc.Col(
@@ -488,6 +492,13 @@ def make_repair_div(system: System) -> List[dbc.Row]:
         )
         for i, r in enumerate(system.get_all_repair_teams().items())
     ]
+    
+    # Wrap the rows in a div with the scrollable style
+    return html.Div(
+        rows,
+        id="repair_div",
+        style={"height": "200px", "overflowY": "auto"}
+    )
 
 
 # Layout components
@@ -512,11 +523,11 @@ control_panel = dbc.Card(
                             width=2,
                         ),
                         dbc.Col(
-                            html.Div("Time: ", className="font-weight-bold"), width=1
+                            html.Div("Time: ", className="font-weight-bold"), width=3
                         ),
                         dbc.Col(html.Div("0", id="current_time"), width=1),
                         dbc.Col(
-                            html.Div("Score: ", className="font-weight-bold"), width=1
+                            html.Div("Score: ", className="font-weight-bold"), width=3
                         ),
                         dbc.Col(html.Div("0", id="current_score"), width=1),
                     ],
@@ -540,23 +551,7 @@ alarms_panel = dbc.Card(
                 )
             ]
         ),
-    ],
-    className="mb-4",
-)
-
-repair_teams_panel = dbc.Card(
-    [
-        dbc.CardHeader("Repair Teams"),
-        dbc.CardBody(
-            [
-                html.Div(
-                    id="repair_div",
-                    style={"height": "300px", "overflowY": "auto"},
-                )
-            ]
-        ),
-    ],
-    className="mb-4",
+    ]
 )
 
 # Invisible components
@@ -576,9 +571,10 @@ app.layout = dbc.Container(
                         dcc.Graph(
                             id="graph",
                             figure=make_graph(system, node_pos),
-                            style={"height": "80vh"},
+                            style={"height": "60vh"},
                             config={"staticPlot": True},
-                        )
+                        ),
+                        alarms_panel
                     ],
                     md=7,
                 ),
@@ -590,12 +586,18 @@ app.layout = dbc.Container(
                                 dbc.CardHeader("System Parameters"),
                                 dbc.CardBody(
                                     make_sliders(system)
-                                ),  # Pass the initial system state
+                                ),
                             ],
                             className="mb-4",
                         ),
-                        alarms_panel,
-                        repair_teams_panel,
+                        dbc.Card(
+                            [
+                            dbc.CardHeader("Repair Teams"),
+                            dbc.CardBody(
+                                make_repair_div(system)
+                            )
+                            ]
+                        ),
                     ],
                     md=5,
                 ),
@@ -749,6 +751,8 @@ def tick(time, data, slider_values, slider_ids, node_pos):
                 system.get_connector(connector_id).desired_flow = (
                     slider_value if slider_value == 1 else 0
                 )
+                
+    system.score += 1
 
     disable_sim = system.tick(time)
     updated_system = jsonpickle.encode(system)
