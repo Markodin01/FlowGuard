@@ -1,0 +1,29 @@
+TANKS
+Source: SR 0 0.5
+Sink: SN 1 0.5
+Tank: T1 22 True False 0.3333333333333333 0.5
+Tank: T2 90 True True 0.6666666666666666 0.5
+
+CONNECTIONS
+Pipe: RP1 T2 SN 3
+Valve: VL1 T1 T2 0 5
+Tap: TP1 SR T1 2 4
+
+ALARMS
+Alarm T1 1 Low
+Alarm T2 0 Low
+Alarm T2 65 High
+
+RepairTeams 2
+
+SCORING
+ScoreCondition T1 19 Low
+ScoreCondition T2 46 Low
+ScoreCondition T2 52 High
+
+
+BREAKS
+Break TP1 4 4 1
+
+
+MillisPerTick 1000

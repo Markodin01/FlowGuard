@@ -1,0 +1,23 @@
+TANKS
+Source: SR 0 0.5
+Sink: SN 1 0.5
+Tank: T1 85 True True 0.5 0.5
+
+CONNECTIONS
+Tap: TP1 SR T1 0 2
+Tap: TP2 T1 SN 0 1
+
+ALARMS
+Alarm T1 51 High
+
+RepairTeams 1
+
+SCORING
+ScoreCondition T1 78 High
+
+
+BREAKS
+Break TP2 4 1 2
+
+
+MillisPerTick 1000

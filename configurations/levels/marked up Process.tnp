@@ -1,0 +1,56 @@
+TANKS
+Source: SR 0 0.5
+Sink: SN 1 0.5
+Tank: T1 16 False True 0.1 0.1 #reverse osmosis
+Tank: T2 46 False False 0.2 0.1 #H20 De-ioniser
+Tank: T3 80 False False 0.3 0.1 # Resin Filters
+Tank: T4 10 False False 0.3 0.2 # UV
+Tank: T5 60 False False 0.3 0.3 # O2/H20 Seperator
+Tank: T6 15 False False 0.4 0.3 # Heat Xchanger
+Tank: T7 100 False False 0.5 0.5 # O2/H20 Seperator
+Tank: T8 60 False False 0.6 0.5 # H2 Seperator
+Tank: T9 20 False False 0.6 0.6 # H2/water Vent
+Tank:T10 30 False False 0.7 0.5 # H2 Heater
+Tank:T11 25 False False 0.7 0.6 # Desicant Tower
+Tank:T12 25 False False 0.8 0.5 # Desicant Tower
+
+CONNECTIONS
+Pipe: PP1 SR T2 2
+Valve: VL1 T1 T2 0 3
+Pipe: PP2 T2 T3 2
+Tap: TP1 T3 T4 0 5
+Valve: VL2 T4 T2 0 3
+Tap: TP2 T4 T5 0 5
+Valve: VL3 T5 T6 0 5
+Pipe: PP2 T6 T7 2
+Pipe: RP1 T7 T5 2
+Valve: VL4 T7 T8 0 5
+Pipe: RP2 T8 T9 2
+Valve: VL5 T9 T2 0 2
+Tap: TP3 T8 T10 0 5
+Pipe: PP2 T10 T11 3
+Pipe: PP2 T10 T12 3
+Valve: VL6 T11 SN 0 2
+Valve: VL7 T12 SN 0 2
+
+ALARMS
+Alarm T2 5 Low
+Alarm T2 40 High
+Alarm T5 20 Low
+Alarm T5 55 High
+Alarm T7 70 Low
+Alarm T7 90 High
+Alarm T8 50 High
+
+RepairTeams 3
+
+SCORING
+ScoreCondition T7 70 Low
+ScoreCondition T7 90 High
+
+
+BREAKS
+Break RP1 5 2 2
+
+
+MillisPerTick 1000
