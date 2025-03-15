@@ -150,15 +150,13 @@ class TapPipe:
                 print(f"Repair completed for {self}")
                 self._broken = False
                 
-                # Store a reference to the repair team before clearing it
-                rt = self.repairTeam
                 
                 # Clear our reference to the repair team
-                self.repairTeam = None
+                self.repairTeam.location = None
+                self.repairTeam.moving = False
+
+                self.repair_time = None
                 
-                # Clear the repair team's reference to us
-                if rt:
-                    rt.location = None
 
     def tick2(self):
         if not self._broken:

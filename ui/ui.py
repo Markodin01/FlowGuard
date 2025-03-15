@@ -494,16 +494,12 @@ def make_alarms_div(system: System) -> List[dbc.Alert]:
 
 
 def make_repair_div(system: System) -> html.Div:
-    """Create repair team display and controls"""
+    """Create repair team display and controls with improved styling"""
     loc_options = [{"label": "Select a location...", "value": "None"}]
     
-    # Add connector options, but only for broken connectors that aren't being repaired
-    broken_connectors = []
+    # Add connector options
     for k, c in sorted(system.get_all_connectors().items()):
         is_broken = hasattr(c, '_broken') and c._broken
-        if is_broken:
-            broken_connectors.append(k)
-        
         # Include all connectors in options but mark broken ones
         label = f"{k} [BROKEN]" if is_broken else k
         loc_options.append({"label": label, "value": k})
@@ -516,13 +512,19 @@ def make_repair_div(system: System) -> html.Div:
         # Determine current assigned location
         current_location = "None"
         if team.location is not None:
+            # Only set the current location if the connector is actually broken
+            # This ensures UI resets even if RepairTeam object wasn't properly reset
             for k, c in system.get_all_connectors().items():
                 if c == team.location:
-                    current_location = k
+                    if hasattr(c, '_broken') and c._broken:
+                        current_location = k
+                    else:
+                        # If connector is not broken, force "None"
+                        current_location = "None"
                     break
         
         # Create status message
-        if team.location is None:
+        if team.location is None or current_location == "None":
             status_message = "Status: Idle"
         else:
             # Check if location is actually broken
@@ -534,22 +536,24 @@ def make_repair_div(system: System) -> html.Div:
             elif is_broken:
                 status_message = f"Status: Repairing {connector_to_id_map.get(team.location, 'Unknown')}"
             else:
-                # Location not broken - should reset team
-                status_message = "Status: Idle (Repair Complete)"
-                current_location = "None"  # Force dropdown to None
+                # Location not broken - force idle status
+                status_message = "Status: Idle"
         
         rows.append(
             dbc.Row(
                 [
                     dbc.Col(
-                        html.Div(f"Team {i + 1}", className="font-weight-bold"), width=2
+                        html.Div(f"Team {i + 1}", className="fw-bold"), 
+                        width=2,
+                        className="d-flex align-items-center"
                     ),
                     dbc.Col(
                         dcc.Dropdown(
                             id={"type": "repair_dropdown", "index": str(i)},
                             options=loc_options,
                             value=current_location,
-                            className="mb-2",
+                            className="mb-0",
+                            clearable=False,
                         ),
                         width=6,
                     ),
@@ -560,16 +564,16 @@ def make_repair_div(system: System) -> html.Div:
                             className="text-muted",
                         ),
                         width=4,
+                        className="d-flex align-items-center"
                     ),
                 ],
                 className="mb-3",
             )
         )
     
-    return html.Div(rows, id="repair_div", style={"height": "200px", "overflowY": "auto"})
+    return html.Div(rows, id="repair_div", style={"maxHeight": "200px", "overflowY": "auto"})
 
 
-# Layout components
 control_panel = dbc.Card(
     [
         dbc.CardHeader("System Controls"),
@@ -601,6 +605,17 @@ control_panel = dbc.Card(
                     ],
                     className="mb-3",
                 ),
+            ]
+        ),
+    ],
+    className="mb-4",
+)
+
+sliders_panel = dbc.Card(
+    [
+        dbc.CardHeader("Control Sliders"),
+        dbc.CardBody(
+            [
                 html.Div(id="sliders_div"),
             ]
         ),
@@ -658,12 +673,7 @@ app.layout = dbc.Container(
                 dbc.Col(
                     [
                         control_panel,
-                        dbc.Card(
-                            [
-                                dbc.CardHeader("System Parameters"),
-                            ],
-                            className="mb-4",
-                        ),
+                        sliders_panel,
                     ],
                     md=5,
                 ),
@@ -747,7 +757,7 @@ def publish_system_state(n_intervals, system_data):
     return n_intervals
 
 @app.callback(
-    Output("sliders_div", "children"),
+    Output("sliders_div", "children", allow_duplicate=True),
     Input("datastore", "data"),
     prevent_initial_call=True
 )
@@ -810,7 +820,7 @@ def handle_repair_updates(repair_values, repair_ids, system_data):
     Output("start-stop-button", "n_clicks"),
     Output("start-stop-button", "disabled"),
     Output("sim_timer", "n_intervals"),
-    Output("sliders_div", "children"),
+    Output("sliders_div", "children", allow_duplicate=True),
     Output("datastore", "data"),
     Output("alarms_div", "children"),
     Output("broken_connectors_div", "children"),
@@ -923,7 +933,7 @@ def handle_ui_actions(
         
     elif triggered_id == "sim_timer":
 
-        for i, (team_id, team) in enumerate(system.get_all_repair_teams().items()):
+        for team_id, team in system.get_all_repair_teams().items():
             if team.location is not None and (not hasattr(team.location, '_broken') or not team.location._broken):
                 print(f"Auto-updating repair team {team_id}: connector fixed or not broken")
                 team.location = None
