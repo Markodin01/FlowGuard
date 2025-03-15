@@ -185,6 +185,46 @@ def get_node_positions(s: System, fixed_node_pos: Dict[str, tuple]) -> Dict[Any,
 
     return nx.spring_layout(g, pos=pos, fixed=fixed, seed=2)
 
+def make_sliders(system: System) -> List[dbc.Row]:
+    """
+    Create slider components for system controls.
+
+    Args:
+        system (System): The current state of the system.
+
+    Returns:
+        List[dbc.Row]: List of Dash Bootstrap rows containing sliders.
+    """
+    return [
+        dbc.Row(
+            [
+                dbc.Col(html.Label(k, className="font-weight-bold"), width=3),
+                dbc.Col(
+                    dcc.Slider(
+                        min=c.min_flow,
+                        max=c.max_flow,
+                        value=c.desired_flow,
+                        step=(1 if isinstance(c, TapPipe) else c.max_flow - c.min_flow),
+                        id={"type": "slider", "index": f"{k}"},
+                        marks={
+                            i: str(i)
+                            for i in range(
+                                int(c.min_flow),
+                                int(c.max_flow) + 1,
+                                max(1, int((c.max_flow - c.min_flow) / 5)),
+                            )
+                        },
+                    ),
+                    width=9,
+                ),
+            ],
+            className="mb-3",
+        )
+        for k, c in sorted(system.get_all_connectors().items())
+        if isinstance(c, (TapPipe, ValvePipe))
+    ]
+
+
 
 # Load system configuration
 system, node_pos, mspertick = parse(sys.argv[1])
@@ -192,7 +232,7 @@ tank_node_pos = get_node_positions(system, node_pos)
 for name, tank in system.get_all_tanks().items():
     node_pos[name] = tank_node_pos[tank]
 
-
+initial_sliders = make_sliders(system)
 def make_graph(s: System, node_pos: Dict[str, tuple]) -> go.Figure:
     """
     Create a Plotly graph object representing the system.
@@ -389,44 +429,6 @@ def create_alarm_shape(x: float, y: float, alarm: tuple) -> Dict[str, Any]:
     }
 
 
-def make_sliders(system: System) -> List[dbc.Row]:
-    """
-    Create slider components for system controls.
-
-    Args:
-        system (System): The current state of the system.
-
-    Returns:
-        List[dbc.Row]: List of Dash Bootstrap rows containing sliders.
-    """
-    return [
-        dbc.Row(
-            [
-                dbc.Col(html.Label(k, className="font-weight-bold"), width=3),
-                dbc.Col(
-                    dcc.Slider(
-                        min=c.min_flow,
-                        max=c.max_flow,
-                        value=c.desired_flow,
-                        step=(1 if isinstance(c, TapPipe) else c.max_flow - c.min_flow),
-                        id={"type": "slider", "index": f"{k}"},
-                        marks={
-                            i: str(i)
-                            for i in range(
-                                int(c.min_flow),
-                                int(c.max_flow) + 1,
-                                max(1, int((c.max_flow - c.min_flow) / 5)),
-                            )
-                        },
-                    ),
-                    width=9,
-                ),
-            ],
-            className="mb-3",
-        )
-        for k, c in sorted(system.get_all_connectors().items())
-        if isinstance(c, (TapPipe, ValvePipe))
-    ]
 
 
 def make_broken_connectors_div(system: System) -> html.Div:
@@ -444,7 +446,13 @@ def make_broken_connectors_div(system: System) -> html.Div:
             [
                 html.Strong(f"Connector: {k} "),
                 html.Span(f"Flow rate: {c._current_flow}"),
-                html.Div(f"Repair time remaining: {c.repair_time}")
+                html.Div([
+                    f"Repair time remaining: {max(0, c.repair_time)}",  # Ensure non-negative
+                    html.Span(
+                        " (Repair in progress)" if c.repairTeam is not None else "",
+                        style={"color": "green", "font-weight": "bold"}
+                    )
+                ])
             ],
             color="danger",
             className="mb-2",
@@ -485,63 +493,80 @@ def make_alarms_div(system: System) -> List[dbc.Alert]:
     ]
 
 
-def make_repair_div(system: System) -> html.Div:  # Note: Return type changed to html.Div
-    """
-    Create components for repair team controls and status.
+def make_repair_div(system: System) -> html.Div:
+    """Create repair team display and controls"""
+    loc_options = [{"label": "Select a location...", "value": "None"}]
     
-    Args:
-        system (System): The current state of the system.
+    # Add connector options, but only for broken connectors that aren't being repaired
+    broken_connectors = []
+    for k, c in sorted(system.get_all_connectors().items()):
+        is_broken = hasattr(c, '_broken') and c._broken
+        if is_broken:
+            broken_connectors.append(k)
+        
+        # Include all connectors in options but mark broken ones
+        label = f"{k} [BROKEN]" if is_broken else k
+        loc_options.append({"label": label, "value": k})
     
-    Returns:
-        html.Div: A scrollable div containing repair team controls.
-    """
-    loc_options = {"None": "Select a location..."}
-    loc_options.update({k: k for k in sorted(system.get_all_connectors().keys())})
-    connector_to_id_map = {c: k for k, c in sorted(system.get_all_connectors().items())}
+    # Get a mapping from connectors to their IDs
+    connector_to_id_map = {c: k for k, c in system.get_all_connectors().items()}
     
-    # Create the rows as before
-    rows = [
-        dbc.Row(
-            [
-                dbc.Col(
-                    html.Div(f"Team {i + 1}", className="font-weight-bold"), width=2
-                ),
-                dbc.Col(
-                    dcc.Dropdown(
-                        id={"type": "repair_dropdown", "index": str(i)},
-                        options=[
-                            {"label": label, "value": key}
-                            for key, label in loc_options.items()
-                        ],
-                        value=(
-                            "None"
-                            if r[1].location is None
-                            else connector_to_id_map.get(r[1].location, "None")
+    rows = []
+    for i, (team_id, team) in enumerate(system.get_all_repair_teams().items()):
+        # Determine current assigned location
+        current_location = "None"
+        if team.location is not None:
+            for k, c in system.get_all_connectors().items():
+                if c == team.location:
+                    current_location = k
+                    break
+        
+        # Create status message
+        if team.location is None:
+            status_message = "Status: Idle"
+        else:
+            # Check if location is actually broken
+            is_broken = hasattr(team.location, '_broken') and team.location._broken
+            repair_time = getattr(team.location, 'repair_time', 0)
+            
+            if is_broken and repair_time > 0:
+                status_message = f"Status: Repairing {connector_to_id_map.get(team.location, 'Unknown')} ({repair_time} ticks left)"
+            elif is_broken:
+                status_message = f"Status: Repairing {connector_to_id_map.get(team.location, 'Unknown')}"
+            else:
+                # Location not broken - should reset team
+                status_message = "Status: Idle (Repair Complete)"
+                current_location = "None"  # Force dropdown to None
+        
+        rows.append(
+            dbc.Row(
+                [
+                    dbc.Col(
+                        html.Div(f"Team {i + 1}", className="font-weight-bold"), width=2
+                    ),
+                    dbc.Col(
+                        dcc.Dropdown(
+                            id={"type": "repair_dropdown", "index": str(i)},
+                            options=loc_options,
+                            value=current_location,
+                            className="mb-2",
                         ),
-                        className="mb-2",
+                        width=6,
                     ),
-                    width=6,
-                ),
-                dbc.Col(
-                    html.Div(
-                        id={"type": "repair_status", "index": str(i)},
-                        children=f"Status: {'Idle' if r[1].location is None else 'Repairing ' + connector_to_id_map.get(r[1].location, 'Unknown Location')}",
-                        className="text-muted",
+                    dbc.Col(
+                        html.Div(
+                            id={"type": "repair_status", "index": str(i)},
+                            children=status_message,
+                            className="text-muted",
+                        ),
+                        width=4,
                     ),
-                    width=4,
-                ),
-            ],
-            className="mb-3",
+                ],
+                className="mb-3",
+            )
         )
-        for i, r in enumerate(system.get_all_repair_teams().items())
-    ]
     
-    # Wrap the rows in a div with the scrollable style
-    return html.Div(
-        rows,
-        id="repair_div",
-        style={"height": "200px", "overflowY": "auto"}
-    )
+    return html.Div(rows, id="repair_div", style={"height": "200px", "overflowY": "auto"})
 
 
 # Layout components
@@ -636,9 +661,6 @@ app.layout = dbc.Container(
                         dbc.Card(
                             [
                                 dbc.CardHeader("System Parameters"),
-                                dbc.CardBody(
-                                    make_sliders(system)
-                                ),
                             ],
                             className="mb-4",
                         ),
@@ -656,7 +678,6 @@ app.layout = dbc.Container(
                     ],
                     md=6,
                 ),
-                dbc.Col([broken_connectors_panel], md=4),
                 dbc.Col(
                     [
                         dbc.Card(
@@ -673,6 +694,12 @@ app.layout = dbc.Container(
             ],
             className="mt-4",
         ),
+        dbc.Row(
+            [
+                dbc.Col([broken_connectors_panel], md=12),
+            ],
+            className="mt-4",
+        ),
         
         *invisible_components,
         dcc.Store(id="buffered-slider-values", data={}),
@@ -681,58 +708,6 @@ app.layout = dbc.Container(
     className="mt-4",
 )
 app.layout.children.append(dcc.Interval(id="redis-publish-interval", interval=10000, n_intervals=0))
-
-
-# Callbacks
-@callback(
-    Output("start-stop-button", "children", allow_duplicate=True),
-    Output("sim_timer", "disabled", allow_duplicate=True),
-    Input("start-stop-button", "n_clicks"),
-    prevent_initial_call=True,
-)
-def start_stop_button_pressed(n_clicks):
-    """
-    Handle start/stop button press.
-
-    Args:
-        n_clicks (int): Number of times the button has been clicked.
-
-    Returns:
-        tuple: Button text and timer disabled state.
-    """
-    if n_clicks % 2 == 0:
-        return "Start", True
-    else:
-        return "Stop", False
-
-
-@callback(
-    Output("start-stop-button", "children", allow_duplicate=True),
-    Output("start-stop-button", "n_clicks"),
-    Output("start-stop-button", "disabled", allow_duplicate=True),
-    Output("sim_timer", "disabled", allow_duplicate=True),
-    Output("sim_timer", "n_intervals"),
-    Output("sliders_div", "children"),
-    Input("reset-button", "n_clicks"),
-    State("datastore", "data"),
-    prevent_initial_call=True,
-)
-def reset(_, data):
-    """
-    Handle system reset.
-
-    Args:
-        _ (int): Number of times the reset button has been clicked (unused).
-        data (str): JSON-encoded system state.
-
-    Returns:
-        tuple: Updated button states, timer state, and slider components.
-    """
-    global FNAME
-    FNAME = str(time.time())  # Start a new file on reset
-    system = jsonpickle.decode(data)
-    system.reset()
-    return "Start", no_update, False, True, 0, make_sliders(system)
 
 
 def listen_to_redis():
@@ -772,151 +747,286 @@ def publish_system_state(n_intervals, system_data):
     return n_intervals
 
 @app.callback(
-    Output("datastore", "data", allow_duplicate=True),
-    Output("graph", "figure"),
-    Output("alarms_div", "children"),
-    Output("repair_div", "children"),
-    Output("broken_connectors_div", "children"),
-    Output("current_time", "children"),
-    Output("current_score", "children"),
-    Output("sim_timer", "disabled", allow_duplicate=True),
-    Output("start-stop-button", "disabled", allow_duplicate=True),
-    Input("sim_timer", "n_intervals"),
-    State("datastore", "data"),
-    State({"type": "slider", "index": ALL}, "value"),
-    State({"type": "slider", "index": ALL}, "id"),
-    State("node_positions", "data"),
-    prevent_initial_call=True,
+    Output("sliders_div", "children"),
+    Input("datastore", "data"),
+    prevent_initial_call=True
 )
-def tick(time, data, slider_values, slider_ids, node_pos):
-    """
-    Handle system tick and update UI components.
-
-    Args:
-        time (int): Current simulation time.
-        data (str): JSON-encoded system state.
-        slider_values (list): List of current slider values.
-        slider_ids (list): List of slider IDs.
-        node_pos (str): JSON-encoded node positions.
-
-    Returns:
-        tuple: Updated system state and UI components.
-    """
-    system = jsonpickle.decode(data)
-    if time == 0:
-        system.reset()
-    node_pos = jsonpickle.decode(node_pos)
-
-    for i, slider_id in enumerate(slider_ids):
-        connector_id = slider_id["index"]
-        value = slider_values[i]
-        system.get_connector(connector_id).desired_flow = value
-
-    while not message_queue.empty():
-        valve_action = message_queue.get_nowait()
-        for slider_id, slider_value in zip(slider_ids, slider_values):
-            connector_id = slider_id["index"]
-            if not any(prefix in connector_id for prefix in ["PP", "RP"]):
-                system.get_connector(connector_id).desired_flow = (
-                    slider_value if slider_value == 1 else 0
-                )
-                
-    system.score += 1
-
-    disable_sim = system.tick(time)
-    updated_system = jsonpickle.encode(system)
-    
-
-    return (
-        updated_system,
-        make_graph(system, node_pos),
-        make_alarms_div(system),
-        make_repair_div(system),
-        make_broken_connectors_div(system),
-        system.time,
-        system.score,
-        disable_sim,
-        disable_sim
-    )
-
+def update_sliders(system_data):
+    """Generate sliders based on current system state"""
+    system = jsonpickle.decode(system_data)
+    return make_sliders(system)
 
 @callback(
     Output("datastore", "data", allow_duplicate=True),
     Input({"type": "repair_dropdown", "index": ALL}, "value"),
+    State({"type": "repair_dropdown", "index": ALL}, "id"),
     State("datastore", "data"),
     prevent_initial_call=True,
 )
-def handle_repair_updates(repair_values, system_data):
+def handle_repair_updates(repair_values, repair_ids, system_data):
     """
     Update repair team assignments based on dropdown selections.
-
-    Args:
-        repair_values (list): List of selected repair locations.
-        system_data (str): JSON-encoded system state.
-
-    Returns:
-        str: Updated JSON-encoded system state.
     """
     system = jsonpickle.decode(system_data)
+    ctx = dash.callback_context
+    
+    # Only update if the user actually changed a dropdown
+    if not ctx.triggered:
+        return no_update
+    
+    changed = False
+    for i, repair_id in enumerate(repair_ids):
+        if i < len(repair_values):
+            team_index = repair_id['index']
+            repair_team = system.get_repair_team(str(int(team_index) + 1))
+            new_location_id = repair_values[i]
+            
+            # Set the new location
+            new_location = None
+            if new_location_id != "None":
+                new_location = system.get_connector(new_location_id)
+            
+            # Only change if needed
+            current_location_id = "None"
+            if repair_team.location is not None:
+                for k, c in system.get_all_connectors().items():
+                    if c == repair_team.location:
+                        current_location_id = k
+                        break
+            
+            if current_location_id != new_location_id:
+                repair_team.dispatch(new_location)
+                changed = True
+    
+    if changed:
+        return jsonpickle.encode(system)
+    else:
+        return no_update
 
-    for i, new_location_id in enumerate(repair_values):
-        repair_team = system.get_repair_team(str(i + 1))
-        new_location = (
-            None
-            if new_location_id == "None"
-            else system.get_all_connectors().get(new_location_id)
-        )
-        repair_team.dispatch(new_location)
-
-    return jsonpickle.encode(system)
-
-
-@app.callback(
-    Output("datastore", "data", allow_duplicate=True),
-    Output("buffered-slider-values", "data"),
+@callback(
+    # All outputs from the three callbacks
+    Output("start-stop-button", "children"),
+    Output("sim_timer", "disabled"),
+    Output("start-stop-button", "n_clicks"),
+    Output("start-stop-button", "disabled"),
+    Output("sim_timer", "n_intervals"),
+    Output("sliders_div", "children"),
+    Output("datastore", "data"),
+    Output("alarms_div", "children"),
+    Output("broken_connectors_div", "children"),
+    Output("graph", "figure"),
+    Output("current_time", "children"),
+    Output("current_score", "children"),
+    
+    # All inputs that can trigger actions
+    Input("start-stop-button", "n_clicks"),
+    Input("reset-button", "n_clicks"),
     Input("sim_timer", "n_intervals"),
-    Input({"type": "slider", "index": ALL}, "value"),
+    
+    # All states needed
     State("datastore", "data"),
-    State("buffered-slider-values", "data"),
+    State("node_positions", "data"),
+    State({"type": "slider", "index": ALL}, "value"),
     State({"type": "slider", "index": ALL}, "id"),
+    
     prevent_initial_call=True,
 )
-def update_system_state(
-    n_intervals, slider_values, system_data, buffered_values, slider_ids
+def handle_ui_actions(
+    start_btn_clicks, reset_btn_clicks, timer_intervals,
+    system_data, node_pos_data, slider_values, slider_ids
 ):
     """
-    Update system state based on simulation ticks and user input.
-
-    Args:
-        n_intervals (int): Number of simulation intervals.
-        slider_values (list): Current slider values.
-        system_data (str): JSON-encoded system state.
-        buffered_values (dict): Previously buffered slider values.
-        slider_ids (list): List of slider IDs.
-
-    Returns:
-        tuple: Updated system state and buffered slider values.
+    Unified callback to handle all major UI actions: start/stop, reset, and simulation ticks.
+    Uses callback_context to determine which input triggered the callback.
     """
     ctx = dash.callback_context
-    triggered_id = ctx.triggered[0]["prop_id"].split(".")[0]
-
+    if not ctx.triggered:
+        return dash.no_update
+        
+    triggered_id = ctx.triggered[0]['prop_id'].split('.')[0]
+    
+    # Get current system state
     system = jsonpickle.decode(system_data)
+    node_pos = jsonpickle.decode(node_pos_data)
+    
+    # Default values - will use no_update where appropriate
+    button_text = no_update
+    timer_disabled = no_update
+    button_clicks = no_update
+    button_disabled = no_update
+    timer_intervals_value = no_update
+    sliders = no_update
+    system_state = no_update
+    alarms_div = no_update
+    broken_div = no_update
+    graph = no_update
+    time_display = no_update
+    score_display = no_update
+    
+    # Handle different triggers
+    if triggered_id == "reset-button":
+        # Reset logic
+        global FNAME
+        FNAME = str(time.time())  # Start a new file on reset
+        
+        # Parse the original file to get a fresh system
+        fresh_system, _, _ = parse(sys.argv[1])
+        fresh_system.reset()
+        
+        # Reset all important state
+        for connector in fresh_system.get_all_connectors().values():
+            if hasattr(connector, 'desired_flow'):
+                connector.desired_flow = connector.min_flow
+            
+            # Make sure no connectors are broken
+            if hasattr(connector, '_broken'):
+                connector._broken = False
+                connector.repair_time = 0
+                connector.repairTeam = None
+        
+        # Reset all repair teams
+        for repair_team in fresh_system.get_all_repair_teams().values():
+            repair_team.location = None
+            repair_team.moving = False
+        
+        # Reset all tanks to empty
+        for tank in fresh_system.get_all_tanks().values():
+            if not isinstance(tank, (Source, Sink)):
+                tank.contains = 0
+                tank.overflowed = False
+        
+        # Reset all alarms
+        for alarm in fresh_system.get_all_alarms().values():
+            alarm.reset()
+        
+        # Reset time and score
+        fresh_system.time = 0
+        fresh_system.score = 0
+        
+        # Update all outputs for reset
+        button_text = "Start"
+        timer_disabled = True
+        button_clicks = 0
+        button_disabled = False
+        timer_intervals_value = 0
+        sliders = make_sliders(fresh_system)
+        system_state = jsonpickle.encode(fresh_system)
+        alarms_div = make_alarms_div(fresh_system)
+        graph = make_graph(fresh_system, node_pos)
+        time_display = "0"
+        score_display = "0"
+        
+    elif triggered_id == "start-stop-button":
+        # Just toggle the button state and timer
+        button_text = "Stop" if start_btn_clicks % 2 == 1 else "Start"
+        timer_disabled = start_btn_clicks % 2 == 0
+        
+    elif triggered_id == "sim_timer":
 
-    if "sim_timer" in triggered_id:
+        for i, (team_id, team) in enumerate(system.get_all_repair_teams().items()):
+            if team.location is not None and (not hasattr(team.location, '_broken') or not team.location._broken):
+                print(f"Auto-updating repair team {team_id}: connector fixed or not broken")
+                team.location = None
+                team.moving = False
+
+        # Get buffered slider values from the store
+        buffered_values = dash.callback_context.states.get('buffered-slider-values.data', {})
+        
+        # Apply buffered slider values
         for connector_id, value in buffered_values.items():
             if connector_id in system.get_all_connectors():
                 system.get_connector(connector_id).desired_flow = value
-        system.tick(n_intervals)
-        updated_system_data = jsonpickle.encode(system)
-        buffered_values = {}
-    else:
-        for value, slider_id in zip(slider_values, slider_ids):
-            connector_id = slider_id["index"]
-            buffered_values[connector_id] = value
-        updated_system_data = no_update
+            # Simulation tick logic
+        if timer_intervals == 0:
+            system.reset()
+
+        
+        # Update connector flows based on slider values
+        for i, slider_id in enumerate(slider_ids):
+            if i < len(slider_values):  # Safety check
+                connector_id = slider_id["index"]
+                value = slider_values[i]
+                system.get_connector(connector_id).desired_flow = value
+        
+        # Process Redis messages
+        while not message_queue.empty():
+            valve_action = message_queue.get_nowait()
+            for slider_id, slider_value in zip(slider_ids, slider_values):
+                connector_id = slider_id["index"]
+                if not any(prefix in connector_id for prefix in ["PP", "RP"]):
+                    system.get_connector(connector_id).desired_flow = (
+                        slider_value if slider_value == 1 else 0
+                    )
+        
+        # For debugging, track broken connectors
+        broken_before = [k for k, c in system.get_all_connectors().items() 
+                         if hasattr(c, '_broken') and c._broken]
+        
+        # Standard simulation tick with breaking enabled
+        system.score += 1
+        disable_sim = system.tick(timer_intervals, breaking=True)
+        
+        # Track which connectors are still broken after
+        broken_after = [k for k, c in system.get_all_connectors().items() 
+                        if hasattr(c, '_broken') and c._broken]
+        
+        # Log if there's a change in broken status
+        if set(broken_before) != set(broken_after):
+            print(f"Time {timer_intervals}, Broken connectors changed:")
+            print(f"  Before: {broken_before}")
+            print(f"  After: {broken_after}")
+        
+        # Update return values based on tick results
+        system_state = jsonpickle.encode(system)
+        graph = make_graph(system, node_pos)
+        alarms_div = make_alarms_div(system)
+        time_display = str(system.time)
+        score_display = str(system.score)
+        broken_div = make_broken_connectors_div(system)
+        
+        # Publish system state to Redis if needed
+        state_array = system_to_1d_array(system)
+        redis_client.set("system_state", json.dumps(state_array))
+        
+        # Handle simulation end
+        if disable_sim:
+            button_text = "Start"
+            timer_disabled = True
+            button_disabled = True
+    
+    # Return all outputs in the correct order
+    return (
+        button_text,
+        timer_disabled,
+        button_clicks,
+        button_disabled,
+        timer_intervals_value,
+        sliders,
+        system_state,
+        alarms_div,
+        broken_div,
+        graph,
+        time_display,
+        score_display
+    )
 
 
-    return updated_system_data, buffered_values
+@app.callback(
+    Output("buffered-slider-values", "data"),
+    Input({"type": "slider", "index": ALL}, "value"),
+    State({"type": "slider", "index": ALL}, "id"),
+    prevent_initial_call=True,
+)
+def buffer_slider_changes(slider_values, slider_ids):
+    """
+    Buffer slider changes until the next simulation tick.
+    """
+    buffered_values = {}
+    for value, slider_id in zip(slider_values, slider_ids):
+        connector_id = slider_id["index"]
+        buffered_values[connector_id] = value
+    
+    return buffered_values
 
 
 if __name__ == "__main__":

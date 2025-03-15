@@ -225,20 +225,37 @@ class System:
         self.score_conditions.append(sc)
 
     def try_breaks(self):
-        "run the various breakages"
-        #handle manual break instructions
-        for (connector,repair_time,flow) in self.manual_breaks.get(str(self.time),[]): #str because we are parsing json which coverts to string I think
-            connector.broken(repair_time,flow)
+        """run the various breakages"""
+        # Handle manual break instructions
+        for (connector, repair_time, flow) in self.manual_breaks.get(str(self.time), []):
+            connector.broken(repair_time, flow)
+            print(f"Manual break applied to {connector} at time {self.time}")
         
-        #handle probabilistic break instructions
-        for c in self.get_all_connectors().values():
+        # Handle probabilistic break instructions
+        for connector_id, c in self.get_all_connectors().items():
+            # Skip if already broken
+            if hasattr(c, '_broken') and c._broken:
+                continue
+                
             c.do_probabilistic_breaks()
+            
+            # Log if a new break occurred
+            if hasattr(c, '_broken') and c._broken:
+                print(f"Probabilistic break applied to {connector_id} at time {self.time}")
 
     def tick(self,time,breaking=True):
         """returns True if overflow happened, False otherwise. breaking is a parameter as to whether to try break things, used for different evolutions of the system."""
         self.time=time
+
+        # Track which connectors were broken before
+        broken_before = {k: c for k, c in self.get_all_connectors().items() 
+                    if hasattr(c, '_broken') and c._broken}
+
+
         if breaking:
             self.try_breaks()
+
+
         
         #move liquids    
         for t in self.get_all_tanks().values():
@@ -249,6 +266,20 @@ class System:
             t.tick3()
             if t.overflowed:
                 return True
+            
+
+        # Track which connectors are still broken after
+        broken_after = {k: c for k, c in self.get_all_connectors().items() 
+                    if hasattr(c, '_broken') and c._broken}
+        
+        # Check for connectors that were fixed without repair teams
+        fixed_without_repair = []
+        for k, c in broken_before.items():
+            if k not in broken_after and c.repairTeam is None:
+                fixed_without_repair.append(k)
+        
+        if fixed_without_repair:
+            print(f"WARNING: Connectors fixed without repair teams: {fixed_without_repair}")
         
         #handle alarms
         for a in self.get_all_alarms().items():

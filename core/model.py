@@ -114,10 +114,12 @@ class TapPipe:
                         random.randint(self.min_break_flow,
                                        self.max_break_flow))
     
-    def broken(self,repair_time,current_flow):
-        self._broken=True
-        self._current_flow=current_flow
-        self.repair_time=repair_time
+    def broken(self, repair_time, current_flow):
+        """Mark the connector as broken and set repair parameters"""
+        self._broken = True
+        self._current_flow = current_flow
+        self.repair_time = repair_time
+        print(f"Connector broken with repair_time={repair_time}, flow={current_flow}")
     
 
     @property
@@ -133,15 +135,30 @@ class TapPipe:
         #    self._current_flow=self._desired_flow
 
     def do_repairs(self):
-        if self.repairTeam!=None and self.repair_time>0:
-            self.repair_time-=1
-        if self.repairTeam!=None and self.repair_time==0 and self._broken:
-            self._broken=False
-            self.repairTeam.location=None
-            self.repairTeam=None
-        if self.repairTeam!=None and not self._broken:
-            self.repairTeam.location=None
-            self.repairTeam=None
+        """
+        Only repair if a repair team is actively working on this connector.
+        Break will persist until repair team completes the work.
+        """
+        # Only decrease repair time if broken AND a repair team is assigned
+        if self._broken and self.repairTeam is not None:
+            # Decrease repair time
+            if self.repair_time > 0:
+                self.repair_time -= 1
+            
+            # Check if repair is complete
+            if self.repair_time <= 0:
+                print(f"Repair completed for {self}")
+                self._broken = False
+                
+                # Store a reference to the repair team before clearing it
+                rt = self.repairTeam
+                
+                # Clear our reference to the repair team
+                self.repairTeam = None
+                
+                # Clear the repair team's reference to us
+                if rt:
+                    rt.location = None
 
     def tick2(self):
         if not self._broken:
@@ -186,17 +203,30 @@ class RandomPipe(TapPipe):
 
 class RepairTeam:
     def __init__(self):
-        self.location=None
-        self.moving=False #used to penalise for moving repair team
+        self.location = None
+        self.moving = False
     
     def reset(self):
-        self.location=None
+        self.location = None
+        self.moving = False
 
-    def dispatch(self,location):
-        self.location=location
-        if location!=None:
-            self.location.repairTeam=self
-            self.moving=True
+    def dispatch(self, location):
+        # If we're already at this location, do nothing
+        if self.location == location:
+            return
+        
+        # If we were working somewhere else, remove our reference
+        if self.location is not None:
+            self.location.repairTeam = None
+        
+        # Update our location
+        self.location = location
+        
+        # If we have a new location, update its repair team reference
+        if location is not None:
+            location.repairTeam = self
+            self.moving = True
+            print(f"Repair team dispatched to {location}, repair time: {location.repair_time}")
 
 ################################################################
 class Tank:
